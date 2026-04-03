@@ -5,6 +5,8 @@ export interface ParsedCard {
   front: string;
   back: string;
   notes: string;
+  audio: string;
+  image: string;
 }
 
 export interface ParsedDeck {
@@ -12,10 +14,49 @@ export interface ParsedDeck {
   cards: ParsedCard[];
 }
 
-function stripHtml(html: string): string {
+// Convert raw bytes to a base64 data URL so media can be stored and displayed inline
+function toDataUrl(bytes: Uint8Array, filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  const mimeMap: Record<string, string> = {
+    mp3: 'audio/mpeg',
+    ogg: 'audio/ogg',
+    wav: 'audio/wav',
+    m4a: 'audio/mp4',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+  };
+  const mime = mimeMap[ext] ?? 'application/octet-stream';
+  // Build base64 in chunks to avoid call-stack overflow on large files
+  let binary = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+// Extract the first [sound:filename] reference from a field value
+function extractSoundFile(text: string): string | null {
+  const m = text.match(/\[sound:([^\]]+)\]/);
+  return m ? m[1] : null;
+}
+
+// Extract the first <img src="..."> filename from a field value
+function extractImageFile(html: string): string | null {
+  const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  return m ? m[1] : null;
+}
+
+// Strip Anki markup and return plain text for display
+function cleanField(html: string): string {
   return html
+    .replace(/\[sound:[^\]]+\]/g, '')  // remove [sound:...] tags
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
+    .replace(/<[^>]+>/g, '')           // strip all HTML tags (incl. <img>)
     .replace(/&nbsp;/g, ' ')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -33,7 +74,27 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
 
   const dbBuffer = await dbEntry.async('arraybuffer');
 
-  // 3. Open SQLite with sql.js
+  // 3. Build media map: original filename → base64 data URL
+  //    The ZIP contains a "media" JSON file: {"0": "image.jpg", "1": "audio.mp3", ...}
+  //    and the actual files stored as "0", "1", etc.
+  const mediaMap: Record<string, string> = {};
+  const mediaEntry = zip.file('media');
+  if (mediaEntry) {
+    try {
+      const mediaJson = JSON.parse(await mediaEntry.async('string')) as Record<string, string>;
+      for (const [numericName, originalName] of Object.entries(mediaJson)) {
+        const mediaFile = zip.file(numericName);
+        if (mediaFile) {
+          const bytes = await mediaFile.async('uint8array');
+          mediaMap[originalName] = toDataUrl(bytes, originalName);
+        }
+      }
+    } catch {
+      // Media extraction failed — continue without media
+    }
+  }
+
+  // 4. Open SQLite with sql.js
   const SQL = await initSqlJs({ locateFile: () => '/sql-wasm.wasm' });
 
   let db: InstanceType<(typeof SQL)['Database']>;
@@ -45,7 +106,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     );
   }
 
-  // 4. Get deck name — try new format first (separate decks table, Anki 2.1.36+),
+  // 5. Get deck name — try new format first (separate decks table, Anki 2.1.36+),
   //    then fall back to old format (col.decks JSON blob)
   let deckName = file.name.replace(/\.apkg$/i, '').replace(/_/g, ' ');
   try {
@@ -53,7 +114,6 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     const name = r[0]?.values[0]?.[0] as string | undefined;
     if (name) deckName = name;
   } catch {
-    // Old format: deck list embedded in col.decks as JSON
     try {
       const colResult = db.exec('SELECT decks FROM col LIMIT 1');
       if (colResult.length > 0 && colResult[0].values.length > 0) {
@@ -68,7 +128,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     }
   }
 
-  // 5. Read notes — flds column uses \x1f (unit separator) between fields
+  // 6. Read notes — flds uses \x1f (unit separator) between fields
   let notesResult: ReturnType<typeof db.exec>;
   try {
     notesResult = db.exec('SELECT flds, tags FROM notes');
@@ -89,10 +149,35 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
       const flds = row[0] as string;
       const tags = ((row[1] as string) ?? '').trim();
       const fields = flds.split('\x1f');
-      const front = stripHtml(fields[0] ?? '');
-      const back = stripHtml(fields[1] ?? '');
+
+      const front = cleanField(fields[0] ?? '');
+      const back = cleanField(fields[1] ?? '');
+
+      // Extra fields (3rd onward) become notes, together with tags
+      const extraFields = fields
+        .slice(2)
+        .map(cleanField)
+        .filter(Boolean);
+      const notes = [...extraFields, ...(tags ? [tags] : [])].join('\n').trim();
+
       if (!front && !back) continue;
-      cards.push({ front: front || '(empty)', back, notes: tags });
+
+      // Find audio and image across all fields
+      let audio = '';
+      let image = '';
+      for (const field of fields) {
+        if (!audio) {
+          const soundFile = extractSoundFile(field);
+          if (soundFile && mediaMap[soundFile]) audio = mediaMap[soundFile];
+        }
+        if (!image) {
+          const imgFile = extractImageFile(field);
+          if (imgFile && mediaMap[imgFile]) image = mediaMap[imgFile];
+        }
+        if (audio && image) break;
+      }
+
+      cards.push({ front: front || '(empty)', back, notes, audio, image });
     }
   }
 

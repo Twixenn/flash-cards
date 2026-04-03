@@ -59,7 +59,7 @@ router.post('/:id/cards', async (req, res) => {
   }
 
   const { cards } = req.body as {
-    cards?: { front: string; back: string; notes?: string }[];
+    cards?: { front: string; back: string; notes?: string; audio?: string; image?: string }[];
   };
   if (!Array.isArray(cards) || cards.length === 0) {
     res.status(400).json({ error: 'cards array required' });
@@ -69,8 +69,8 @@ router.post('/:id/cards', async (req, res) => {
   for (const c of cards) {
     if (c.front?.trim()) {
       await pool.query(
-        'INSERT INTO cards (deck_id, front, back, notes) VALUES ($1, $2, $3, $4)',
-        [deckId, c.front.trim(), c.back?.trim() || '', c.notes?.trim() || '']
+        'INSERT INTO cards (deck_id, front, back, notes, audio, image) VALUES ($1, $2, $3, $4, $5, $6)',
+        [deckId, c.front.trim(), c.back?.trim() || '', c.notes?.trim() || '', c.audio || '', c.image || '']
       );
     }
   }

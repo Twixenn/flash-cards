@@ -24,7 +24,7 @@ export const api = {
   deleteDeck: (id: number) =>
     request<{ ok: boolean }>(`/decks/${id}`, { method: 'DELETE' }),
 
-  addCards: (deckId: number, cards: { front: string; back: string; notes?: string }[]) =>
+  addCards: (deckId: number, cards: { front: string; back: string; notes?: string; audio?: string; image?: string }[]) =>
     request<{ ok: boolean; count: number }>(`/decks/${deckId}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
