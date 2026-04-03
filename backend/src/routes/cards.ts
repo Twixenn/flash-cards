@@ -1,68 +1,68 @@
 import { Router } from 'express';
-import { db } from '../db';
+import { pool } from '../db';
 import { applyReview, previewIntervals, Quality } from '../services/srs';
 
 const router = Router();
 
 // GET /api/decks/:id/cards/due
-router.get('/decks/:id/cards/due', (req, res) => {
-  const { id } = req.params;
+router.get('/decks/:id/cards/due', async (req, res) => {
   const now = Math.floor(Date.now() / 1000);
-  const cards = db
-    .prepare(
-      `SELECT * FROM cards WHERE deck_id = ? AND due <= ?
-       ORDER BY due ASC`
-    )
-    .all(id, now);
-  res.json(cards);
+  const { rows } = await pool.query(
+    'SELECT * FROM cards WHERE deck_id = $1 AND due <= $2 ORDER BY due ASC',
+    [req.params.id, now]
+  );
+  res.json(rows);
 });
 
 // POST /api/cards/:id/review  { quality: 0|1|2|3 }
-router.post('/:id/review', (req, res) => {
-  const { id } = req.params;
+router.post('/:id/review', async (req, res) => {
   const { quality } = req.body as { quality?: number };
-
   if (quality === undefined || ![0, 1, 2, 3].includes(quality)) {
     res.status(400).json({ error: 'quality must be 0, 1, 2, or 3' });
     return;
   }
 
-  const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(id) as
-    | {
-        id: number;
-        interval: number;
-        ease_factor: number;
-        repetitions: number;
-      }
-    | undefined;
-
-  if (!card) {
+  const { rows } = await pool.query('SELECT * FROM cards WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) {
     res.status(404).json({ error: 'Card not found' });
     return;
   }
 
-  const updated = applyReview(card, quality as Quality);
-  db.prepare(
-    `UPDATE cards
-     SET interval = ?, ease_factor = ?, repetitions = ?, due = ?
-     WHERE id = ?`
-  ).run(updated.interval, updated.ease_factor, updated.repetitions, updated.due, id);
+  const card = rows[0];
+  const updated = applyReview(
+    {
+      interval: card.interval,
+      ease_factor: parseFloat(card.ease_factor),
+      repetitions: card.repetitions,
+    },
+    quality as Quality
+  );
 
-  const previews = previewIntervals(updated);
-  res.json({ ...updated, previews });
+  await pool.query(
+    `UPDATE cards
+     SET interval = $1, ease_factor = $2, repetitions = $3, due = $4
+     WHERE id = $5`,
+    [updated.interval, updated.ease_factor, updated.repetitions, updated.due, req.params.id]
+  );
+
+  res.json({ ...updated, previews: previewIntervals(updated) });
 });
 
-// GET /api/cards/:id/preview — preview next intervals without committing
-router.get('/:id/preview', (req, res) => {
-  const { id } = req.params;
-  const card = db.prepare('SELECT * FROM cards WHERE id = ?').get(id) as
-    | { interval: number; ease_factor: number; repetitions: number }
-    | undefined;
-  if (!card) {
+// GET /api/cards/:id/preview
+router.get('/:id/preview', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM cards WHERE id = $1', [req.params.id]);
+  if (rows.length === 0) {
     res.status(404).json({ error: 'Card not found' });
     return;
   }
-  res.json(previewIntervals(card));
+  const c = rows[0];
+  res.json(
+    previewIntervals({
+      interval: c.interval,
+      ease_factor: parseFloat(c.ease_factor),
+      repetitions: c.repetitions,
+    })
+  );
 });
 
 export default router;

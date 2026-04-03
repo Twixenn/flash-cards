@@ -19,11 +19,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['.apkg', '.txt', '.csv', '.tsv'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
+    if (['.apkg', '.txt', '.csv', '.tsv'].includes(ext)) {
       cb(null, true);
     } else {
       cb(new Error(`Unsupported file type: ${ext}`));
@@ -31,7 +30,6 @@ const upload = multer({
   },
 });
 
-// POST /api/import
 router.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded' });
@@ -44,23 +42,18 @@ router.post('/', upload.single('file'), async (req, res) => {
 
   try {
     let result;
-
     if (ext === '.apkg') {
-      result = importApkg(filePath, deckNameOverride);
+      result = await importApkg(filePath, deckNameOverride);
     } else {
-      // text/csv/tsv
       const content = fs.readFileSync(filePath, 'utf-8');
       const deckName =
         deckNameOverride ||
         path.basename(req.file.originalname, ext).replace(/_/g, ' ');
-      const separator = ext === '.csv' ? ',' : '\t';
-      result = importTextFile(content, deckName, separator);
+      result = await importTextFile(content, deckName, ext === '.csv' ? ',' : '\t');
     }
-
     res.status(201).json(result);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Import failed';
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Import failed' });
   } finally {
     fs.unlink(filePath, () => {});
   }
