@@ -21,16 +21,9 @@ export interface Card {
 }
 
 export type Quality = 0 | 1 | 2 | 3;
-export type Screen = 'home' | 'study' | 'done';
+export type Screen = 'home' | 'study' | 'learn' | 'done';
 
 export interface SessionStats {
-  again: number;
-  hard: number;
-  good: number;
-  easy: number;
-}
-
-export interface Previews {
   again: number;
   hard: number;
   good: number;

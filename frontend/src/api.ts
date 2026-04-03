@@ -24,37 +24,32 @@ export const api = {
   deleteDeck: (id: number) =>
     request<{ ok: boolean }>(`/decks/${id}`, { method: 'DELETE' }),
 
-  addCards: (
-    deckId: number,
-    cards: { front: string; back: string; notes?: string }[]
-  ) =>
+  addCards: (deckId: number, cards: { front: string; back: string; notes?: string }[]) =>
     request<{ ok: boolean; count: number }>(`/decks/${deckId}/cards`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cards }),
     }),
 
-  getDueCards: (deckId: number) =>
-    request<Card[]>(`/decks/${deckId}/cards/due`),
+  getDueCards: (deckId: number) => request<Card[]>(`/decks/${deckId}/cards/due`),
+
+  getAllCards: (deckId: number) => request<Card[]>(`/decks/${deckId}/cards`),
 
   reviewCard: (cardId: number, quality: Quality) =>
-    request<{ interval: number; due: number; previews: Record<string, number> }>(
-      `/cards/${cardId}/review`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quality }),
-      }
-    ),
+    request<{ interval: number; due: number }>(`/cards/${cardId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quality }),
+    }),
 
   importFile: (file: File, deckName?: string) => {
     const form = new FormData();
     form.append('file', file);
     if (deckName) form.append('deckName', deckName);
-    return request<{ deckId: number; cardCount: number; deckName: string }>(
-      '/import',
-      { method: 'POST', body: form }
-    );
+    return request<{ deckId: number; cardCount: number; deckName: string }>('/import', {
+      method: 'POST',
+      body: form,
+    });
   },
 
   mediaUrl: (filename: string) => `${BASE}/media/${encodeURIComponent(filename)}`,

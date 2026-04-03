@@ -5,9 +5,10 @@ interface Props {
   card: Card;
   revealed: boolean;
   onReveal: () => void;
+  hint?: string;
 }
 
-function intervalLabel(days: number): string {
+export function intervalLabel(days: number): string {
   if (days <= 0) return '< 1 dag';
   if (days === 1) return '1 dag';
   if (days < 7) return `${days} dagar`;
@@ -15,42 +16,50 @@ function intervalLabel(days: number): string {
   return `${Math.round(days / 30)} mån`;
 }
 
-export function FlashCard({ card, revealed, onReveal }: Props) {
+export function FlashCard({ card, revealed, onReveal, hint = 'tryck för att visa svar' }: Props) {
   return (
     <div
-      className={`flashcard${revealed ? ' revealed' : ''}`}
+      className={`card-glow w-full max-w-lg bg-surface border rounded-3xl px-7 py-10 text-center min-h-56 flex flex-col items-center justify-center gap-5 relative overflow-hidden transition-colors duration-200 ${
+        revealed ? 'border-border cursor-default' : 'border-border hover:border-accent cursor-pointer active:scale-[0.99]'
+      }`}
       onClick={!revealed ? onReveal : undefined}
     >
-      <div className="card-tag">FRAMSIDA</div>
+      <span className="text-[0.65rem] text-muted tracking-widest uppercase">framsida</span>
 
       {card.image && (
         <img
           src={api.mediaUrl(card.image)}
           alt=""
-          style={{ maxWidth: '100%', maxHeight: 180, borderRadius: 8, objectFit: 'contain' }}
+          className="max-w-full max-h-44 rounded-lg object-contain"
         />
       )}
 
-      <div className="card-front-text">{card.front}</div>
+      <div className="font-serif text-[clamp(2rem,8vw,3.5rem)] text-text leading-none break-words">
+        {card.front}
+      </div>
 
       {card.audio && !revealed && (
-        <audio src={api.mediaUrl(card.audio)} autoPlay controls style={{ width: '100%' }} />
+        <audio src={api.mediaUrl(card.audio)} autoPlay controls className="w-full" />
       )}
 
       {revealed && (
-        <div className="card-back show">
-          <div className="card-tag">BAKSIDA</div>
-          <div className="card-back-text">{card.back}</div>
-          {card.notes && <div className="card-notes">{card.notes}</div>}
+        <div className="flex flex-col items-center gap-3 border-t border-border pt-5 w-full">
+          <span className="text-[0.65rem] text-muted tracking-widest uppercase">baksida</span>
+          <div className="font-serif text-[clamp(1.2rem,5vw,2rem)] text-accent italic">
+            {card.back}
+          </div>
+          {card.notes && (
+            <div className="text-xs text-muted leading-relaxed">{card.notes}</div>
+          )}
           {card.audio && (
-            <audio src={api.mediaUrl(card.audio)} autoPlay controls style={{ width: '100%' }} />
+            <audio src={api.mediaUrl(card.audio)} autoPlay controls className="w-full" />
           )}
         </div>
       )}
 
-      {!revealed && <div className="tap-hint">tryck för att visa svar</div>}
+      {!revealed && (
+        <span className="text-[0.7rem] text-muted tracking-wide -mt-2">{hint}</span>
+      )}
     </div>
   );
 }
-
-export { intervalLabel };

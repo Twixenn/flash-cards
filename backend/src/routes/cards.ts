@@ -4,6 +4,15 @@ import { applyReview, previewIntervals, Quality } from '../services/srs';
 
 const router = Router();
 
+// GET /api/decks/:id/cards  (all cards, for learn mode)
+router.get('/decks/:id/cards', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM cards WHERE deck_id = $1 ORDER BY created_at ASC',
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
 // GET /api/decks/:id/cards/due
 router.get('/decks/:id/cards/due', async (req, res) => {
   const now = Math.floor(Date.now() / 1000);
