@@ -122,7 +122,7 @@ export function HomeScreen({ onStudy }: Props) {
         <input
           type="file"
           ref={fileInputRef}
-          accept=".apkg,.txt,.csv,.tsv"
+          accept=".apkg,.txt,.csv,.tsv,application/zip,*/*"
           style={{ display: 'none' }}
           onChange={handleFileImport}
         />

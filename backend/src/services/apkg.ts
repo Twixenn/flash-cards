@@ -26,8 +26,12 @@ export async function importApkg(
       throw new Error('Invalid .apkg file: missing collection.anki2');
     }
 
-    // Use sql.js (pure JS) to read the Anki SQLite — no native build needed
-    const SQL = await initSqlJs();
+    // Use sql.js (pure JS/WASM) to read the Anki SQLite — no native build needed
+    // locateFile is required so Node.js finds the .wasm file after TS compilation
+    const SQL = await initSqlJs({
+      locateFile: (file: string) =>
+        path.join(__dirname, '..', '..', 'node_modules', 'sql.js', 'dist', file),
+    });
     const fileBuffer = fs.readFileSync(ankiDbPath);
     const ankiDb = new SQL.Database(fileBuffer);
 
