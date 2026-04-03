@@ -122,7 +122,6 @@ export function HomeScreen({ onStudy }: Props) {
         <input
           type="file"
           ref={fileInputRef}
-          accept=""
           style={{ display: 'none' }}
           onChange={handleFileImport}
         />
