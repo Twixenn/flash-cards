@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import type { Deck } from '../types';
 import { AddDeckModal } from './AddDeckModal';
+import { parseApkg } from '../utils/parseApkg';
 
 interface Props {
   onStudy: (deck: Deck) => void;
@@ -31,9 +32,22 @@ export function HomeScreen({ onStudy }: Props) {
     e.target.value = '';
     setImportError('');
     setImporting(true);
+
     try {
-      const result = await api.importFile(file);
-      alert(`Importerat "${result.deckName}" med ${result.cardCount} kort!`);
+      const ext = file.name.split('.').pop()?.toLowerCase();
+
+      if (ext === 'apkg') {
+        // Parse .apkg entirely in the browser — no server upload needed
+        const { deckName, cards } = await parseApkg(file);
+        const deck = await api.createDeck(deckName);
+        await api.addCards(deck.id, cards);
+        alert(`Importerat "${deckName}" med ${cards.length} kort!`);
+      } else {
+        // Text/CSV: send to server as before
+        const result = await api.importFile(file);
+        alert(`Importerat "${result.deckName}" med ${result.cardCount} kort!`);
+      }
+
       loadDecks();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Import misslyckades');
@@ -112,19 +126,19 @@ export function HomeScreen({ onStudy }: Props) {
         <button className="btn" onClick={() => setShowModal(true)}>
           + Nytt deck
         </button>
-        <button
-          className="btn primary"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={importing}
+        <label
+          className={`btn primary${importing ? ' disabled' : ''}`}
+          style={{ textAlign: 'center', cursor: importing ? 'not-allowed' : 'pointer', opacity: importing ? 0.5 : 1 }}
         >
           {importing ? 'Importerar...' : 'Importera .apkg'}
-        </button>
-        <input
-          type="file"
-          ref={fileInputRef}
-          style={{ display: 'none' }}
-          onChange={handleFileImport}
-        />
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+            onChange={handleFileImport}
+            disabled={importing}
+          />
+        </label>
       </div>
 
       {showModal && (
