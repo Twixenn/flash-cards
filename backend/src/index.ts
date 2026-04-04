@@ -11,7 +11,7 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 app.use('/api/decks', decksRouter);
 app.use('/api/cards', cardsRouter);

@@ -48,8 +48,13 @@ export function HomeScreen({ onStudy, onLearn }: Props) {
         const { deckName, cards } = await parseApkg(file, log);
         log(`Skapar deck "${deckName}"...`);
         const deck = await api.createDeck(deckName);
-        log(`Laddar upp ${cards.length} kort...`);
-        await api.addCards(deck.id, cards);
+        const BATCH = 20;
+        for (let i = 0; i < cards.length; i += BATCH) {
+          const batch = cards.slice(i, i + BATCH);
+          const end = Math.min(i + BATCH, cards.length);
+          log(`Laddar upp kort ${i + 1}–${end} av ${cards.length}...`);
+          await api.addCards(deck.id, batch);
+        }
         setImportCardCount(cards.length);
       } else {
         log('Laddar upp fil...');
