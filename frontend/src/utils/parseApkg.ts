@@ -68,8 +68,14 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
   // 1. Extract ZIP
   const zip = await JSZip.loadAsync(file);
 
-  // 2. Find the collection database (anki2 = old, anki21 = new)
-  const dbEntry = zip.file('collection.anki2') ?? zip.file('collection.anki21');
+  // 2. Find the collection database — try newest format first
+  //    anki21b = Anki 2.1.50+ (new scheduler)
+  //    anki21  = Anki 2.1.36–2.1.49
+  //    anki2   = legacy (may contain only a compat placeholder note)
+  const dbEntry =
+    zip.file('collection.anki21b') ??
+    zip.file('collection.anki21') ??
+    zip.file('collection.anki2');
   if (!dbEntry) throw new Error('Ogiltig .apkg-fil: saknar collection.anki2');
 
   const dbBuffer = await dbEntry.async('arraybuffer');
@@ -161,6 +167,8 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
       const notes = [...extraFields, ...(tags ? [tags] : [])].join('\n').trim();
 
       if (!front && !back) continue;
+      // Skip Anki's compatibility placeholder note
+      if (front.startsWith('Please update to the latest Anki version')) continue;
 
       // Find audio and image across all fields
       let audio = '';
