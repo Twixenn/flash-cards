@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import type { Deck } from '../types';
 import { AddDeckModal } from './AddDeckModal';
+import { ImportModal } from './ImportModal';
 import { parseApkg } from '../utils/parseApkg';
 
 interface Props {
@@ -12,8 +13,15 @@ interface Props {
 export function HomeScreen({ onStudy, onLearn }: Props) {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [importLines, setImportLines] = useState<string[]>([]);
+  const [importDone, setImportDone] = useState(false);
+  const [importCardCount, setImportCardCount] = useState<number | undefined>();
   const [importError, setImportError] = useState('');
+  const importing = importLines.length > 0 && !importDone && !importError;
+  const showImportModal = importLines.length > 0;
+  const addLine = useRef((msg: string) => {
+    setImportLines((prev) => [...prev, msg]);
+  });
 
   async function loadDecks() {
     try { setDecks(await api.getDecks()); } catch { /* silent */ }
@@ -21,28 +29,38 @@ export function HomeScreen({ onStudy, onLearn }: Props) {
 
   useEffect(() => { loadDecks(); }, []);
 
+  function resetImport() {
+    setImportLines([]);
+    setImportDone(false);
+    setImportCardCount(undefined);
+    setImportError('');
+  }
+
   async function handleFileImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-    setImportError('');
-    setImporting(true);
+    resetImport();
+    const log = addLine.current;
     try {
       const ext = file.name.split('.').pop()?.toLowerCase();
       if (ext === 'apkg') {
-        const { deckName, cards } = await parseApkg(file);
+        const { deckName, cards } = await parseApkg(file, log);
+        log(`Skapar deck "${deckName}"...`);
         const deck = await api.createDeck(deckName);
+        log(`Laddar upp ${cards.length} kort...`);
         await api.addCards(deck.id, cards);
-        alert(`Importerat "${deckName}" med ${cards.length} kort!`);
+        setImportCardCount(cards.length);
       } else {
+        log('Laddar upp fil...');
         const result = await api.importFile(file);
-        alert(`Importerat "${result.deckName}" med ${result.cardCount} kort!`);
+        log(`Importerat "${result.deckName}" med ${result.cardCount} kort.`);
+        setImportCardCount(result.cardCount);
       }
+      setImportDone(true);
       loadDecks();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Import misslyckades');
-    } finally {
-      setImporting(false);
     }
   }
 
@@ -112,10 +130,6 @@ export function HomeScreen({ onStudy, onLearn }: Props) {
         )}
       </div>
 
-      {importError && (
-        <div className="text-again text-xs px-1">{importError}</div>
-      )}
-
       {/* Bottom bar */}
       <div className="flex gap-3 pt-4 border-t border-border">
         <button className={`${btnBase} flex-1`} onClick={() => setShowModal(true)}>
@@ -128,7 +142,7 @@ export function HomeScreen({ onStudy, onLearn }: Props) {
               : 'bg-accent text-bg hover:bg-accent/90'
           }`}
         >
-          {importing ? 'Importerar...' : 'Importera .apkg'}
+          Importera .apkg
           <input
             type="file"
             style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
@@ -140,6 +154,16 @@ export function HomeScreen({ onStudy, onLearn }: Props) {
 
       {showModal && (
         <AddDeckModal onClose={() => setShowModal(false)} onCreated={loadDecks} />
+      )}
+
+      {showImportModal && (
+        <ImportModal
+          lines={importLines}
+          done={importDone}
+          cardCount={importCardCount}
+          error={importError}
+          onClose={resetImport}
+        />
       )}
     </div>
   );

@@ -64,8 +64,11 @@ function cleanField(html: string): string {
     .trim();
 }
 
-export async function parseApkg(file: File): Promise<ParsedDeck> {
+export type ProgressFn = (message: string) => void;
+
+export async function parseApkg(file: File, onProgress: ProgressFn = () => {}): Promise<ParsedDeck> {
   // 1. Extract ZIP
+  onProgress('Öppnar fil...');
   const zip = await JSZip.loadAsync(file);
 
   // 2. Build media map: original filename → base64 data URL
@@ -76,11 +79,15 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
   if (mediaEntry) {
     try {
       const mediaJson = JSON.parse(await mediaEntry.async('string')) as Record<string, string>;
-      for (const [numericName, originalName] of Object.entries(mediaJson)) {
-        const mediaFile = zip.file(numericName);
-        if (mediaFile) {
-          const bytes = await mediaFile.async('uint8array');
-          mediaMap[originalName] = toDataUrl(bytes, originalName);
+      const mediaEntries = Object.entries(mediaJson);
+      if (mediaEntries.length > 0) {
+        onProgress(`Extraherar media (${mediaEntries.length} filer)...`);
+        for (const [numericName, originalName] of mediaEntries) {
+          const mediaFile = zip.file(numericName);
+          if (mediaFile) {
+            const bytes = await mediaFile.async('uint8array');
+            mediaMap[originalName] = toDataUrl(bytes, originalName);
+          }
         }
       }
     } catch {
@@ -89,6 +96,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
   }
 
   // 3. Open SQLite with sql.js
+  onProgress('Laddar databas...');
   const SQL = await initSqlJs({ locateFile: () => '/sql-wasm.wasm' });
 
   // Try each database format in order.
@@ -105,6 +113,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     const entry = zip.file(filename);
     if (!entry) continue;
 
+    onProgress(`Provar ${filename}...`);
     let buf: ArrayBuffer;
     try { buf = await entry.async('arraybuffer'); } catch { continue; }
 
@@ -122,6 +131,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
         (r) => !(r[0] as string).split('\x1f')[0].startsWith(COMPAT_MSG)
       );
       if (real.length > 0) {
+        onProgress(`Hittade ${real.length} noter i ${filename}`);
         notesRows = real;
         openedDb = db;
         break;
@@ -163,6 +173,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
   openedDb.close();
 
   // 5. Build cards from notes rows
+  onProgress('Bearbetar kort...');
   const cards: ParsedCard[] = [];
   for (const row of notesRows) {
     const flds = row[0] as string;
