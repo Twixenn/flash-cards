@@ -62,6 +62,22 @@ export function LearnScreen({ deck, onBack }: Props) {
     );
   }
 
+  if (cards.length === 0) {
+    return (
+      <div className="min-h-[100dvh] bg-bg flex flex-col items-center justify-center gap-5 px-6 text-center">
+        <div className="text-5xl">✦</div>
+        <div className="font-serif text-2xl text-accent">Inga kort</div>
+        <div className="text-muted text-sm">Det finns inga kort i det här decket än.</div>
+        <button
+          className="px-6 py-3 rounded-2xl bg-accent text-bg text-sm font-medium cursor-pointer hover:bg-accent/90 transition-colors"
+          onClick={onBack}
+        >
+          Tillbaka
+        </button>
+      </div>
+    );
+  }
+
   if (done) {
     return (
       <div className="min-h-[100dvh] bg-bg flex flex-col items-center justify-center gap-5 px-6 text-center">

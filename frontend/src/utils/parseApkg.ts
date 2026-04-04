@@ -68,19 +68,7 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
   // 1. Extract ZIP
   const zip = await JSZip.loadAsync(file);
 
-  // 2. Find the collection database — try newest format first
-  //    anki21b = Anki 2.1.50+ (new scheduler)
-  //    anki21  = Anki 2.1.36–2.1.49
-  //    anki2   = legacy (may contain only a compat placeholder note)
-  const dbEntry =
-    zip.file('collection.anki21b') ??
-    zip.file('collection.anki21') ??
-    zip.file('collection.anki2');
-  if (!dbEntry) throw new Error('Ogiltig .apkg-fil: saknar collection.anki2');
-
-  const dbBuffer = await dbEntry.async('arraybuffer');
-
-  // 3. Build media map: original filename → base64 data URL
+  // 2. Build media map: original filename → base64 data URL
   //    The ZIP contains a "media" JSON file: {"0": "image.jpg", "1": "audio.mp3", ...}
   //    and the actual files stored as "0", "1", etc.
   const mediaMap: Record<string, string> = {};
@@ -100,28 +88,66 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     }
   }
 
-  // 4. Open SQLite with sql.js
+  // 3. Open SQLite with sql.js
   const SQL = await initSqlJs({ locateFile: () => '/sql-wasm.wasm' });
 
-  let db: InstanceType<(typeof SQL)['Database']>;
-  try {
-    db = new SQL.Database(new Uint8Array(dbBuffer));
-  } catch {
+  // Try each database format in order.
+  // anki21b = Anki 2.1.50+ (new scheduler), anki21 = 2.1.36–2.1.49, anki2 = legacy.
+  // Some formats may open but return 0 rows (e.g. anki21b with sql.js), so we pick
+  // the first file that yields actual non-placeholder notes.
+  const COMPAT_MSG = 'Please update to the latest Anki version';
+  const candidates = ['collection.anki21b', 'collection.anki21', 'collection.anki2'];
+
+  let notesRows: unknown[][] = [];
+  let openedDb: InstanceType<(typeof SQL)['Database']> | null = null;
+
+  for (const filename of candidates) {
+    const entry = zip.file(filename);
+    if (!entry) continue;
+
+    let buf: ArrayBuffer;
+    try { buf = await entry.async('arraybuffer'); } catch { continue; }
+
+    let db: InstanceType<(typeof SQL)['Database']>;
+    try {
+      db = new SQL.Database(new Uint8Array(buf));
+    } catch {
+      continue; // format not readable by sql.js, try next
+    }
+
+    try {
+      const result = db.exec('SELECT flds, tags FROM notes');
+      const rows = (result[0]?.values ?? []) as unknown[][];
+      const real = rows.filter(
+        (r) => !(r[0] as string).split('\x1f')[0].startsWith(COMPAT_MSG)
+      );
+      if (real.length > 0) {
+        notesRows = real;
+        openedDb = db;
+        break;
+      }
+    } catch {
+      // schema mismatch — try next
+    }
+    db.close();
+  }
+
+  if (!openedDb) {
     throw new Error(
-      'Kunde inte öppna Anki-databasen. Filen kan vara skadad eller i ett format som appen inte stödjer.'
+      'Inga kort hittades. Kontrollera att filen är ett giltigt Anki-deck och försök exportera igen från Anki: ' +
+      'Arkiv → Exportera → Anki Deck Package (.apkg).'
     );
   }
 
-  // 5. Get deck name — try new format first (separate decks table, Anki 2.1.36+),
-  //    then fall back to old format (col.decks JSON blob)
+  // 4. Get deck name — try new format first (separate decks table), then col.decks JSON
   let deckName = file.name.replace(/\.apkg$/i, '').replace(/_/g, ' ');
   try {
-    const r = db.exec("SELECT name FROM decks WHERE id != 1 LIMIT 1");
+    const r = openedDb.exec("SELECT name FROM decks WHERE id != 1 LIMIT 1");
     const name = r[0]?.values[0]?.[0] as string | undefined;
     if (name) deckName = name;
   } catch {
     try {
-      const colResult = db.exec('SELECT decks FROM col LIMIT 1');
+      const colResult = openedDb.exec('SELECT decks FROM col LIMIT 1');
       if (colResult.length > 0 && colResult[0].values.length > 0) {
         const decksJson = JSON.parse(colResult[0].values[0][0] as string);
         const names = Object.values(decksJson)
@@ -134,59 +160,40 @@ export async function parseApkg(file: File): Promise<ParsedDeck> {
     }
   }
 
-  // 6. Read notes — flds uses \x1f (unit separator) between fields
-  let notesResult: ReturnType<typeof db.exec>;
-  try {
-    notesResult = db.exec('SELECT flds, tags FROM notes');
-  } catch {
-    db.close();
-    throw new Error(
-      'Din Anki-fil verkar använda ett nyare format. ' +
-      'Försök exportera decket igen från Anki: Arkiv → Exportera → Anki Deck Package (.apkg). ' +
-      'Avmarkera "Support older Anki versions" om du inte ser alternativet.'
-    );
-  }
+  openedDb.close();
 
-  db.close();
-
+  // 5. Build cards from notes rows
   const cards: ParsedCard[] = [];
-  if (notesResult.length > 0) {
-    for (const row of notesResult[0].values) {
-      const flds = row[0] as string;
-      const tags = ((row[1] as string) ?? '').trim();
-      const fields = flds.split('\x1f');
+  for (const row of notesRows) {
+    const flds = row[0] as string;
+    const tags = ((row[1] as string) ?? '').trim();
+    const fields = flds.split('\x1f');
 
-      const front = cleanField(fields[0] ?? '');
-      const back = cleanField(fields[1] ?? '');
+    const front = cleanField(fields[0] ?? '');
+    const back = cleanField(fields[1] ?? '');
 
-      // Extra fields (3rd onward) become notes, together with tags
-      const extraFields = fields
-        .slice(2)
-        .map(cleanField)
-        .filter(Boolean);
-      const notes = [...extraFields, ...(tags ? [tags] : [])].join('\n').trim();
+    // Extra fields (3rd onward) become notes, together with tags
+    const extraFields = fields.slice(2).map(cleanField).filter(Boolean);
+    const notes = [...extraFields, ...(tags ? [tags] : [])].join('\n').trim();
 
-      if (!front && !back) continue;
-      // Skip Anki's compatibility placeholder note
-      if (front.startsWith('Please update to the latest Anki version')) continue;
+    if (!front && !back) continue;
 
-      // Find audio and image across all fields
-      let audio = '';
-      let image = '';
-      for (const field of fields) {
-        if (!audio) {
-          const soundFile = extractSoundFile(field);
-          if (soundFile && mediaMap[soundFile]) audio = mediaMap[soundFile];
-        }
-        if (!image) {
-          const imgFile = extractImageFile(field);
-          if (imgFile && mediaMap[imgFile]) image = mediaMap[imgFile];
-        }
-        if (audio && image) break;
+    // Find audio and image across all fields
+    let audio = '';
+    let image = '';
+    for (const field of fields) {
+      if (!audio) {
+        const soundFile = extractSoundFile(field);
+        if (soundFile && mediaMap[soundFile]) audio = mediaMap[soundFile];
       }
-
-      cards.push({ front: front || '(empty)', back, notes, audio, image });
+      if (!image) {
+        const imgFile = extractImageFile(field);
+        if (imgFile && mediaMap[imgFile]) image = mediaMap[imgFile];
+      }
+      if (audio && image) break;
     }
+
+    cards.push({ front: front || '(empty)', back, notes, audio, image });
   }
 
   if (cards.length === 0) throw new Error('Inga kort hittades i filen');
